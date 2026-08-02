@@ -53,8 +53,8 @@ function extractSubtitlesFromEmbedUrl(embedUrl) {
       subtitles.push({
         lang: "en",
         label:
-          parsed.get("sub_1") ??
-          parsed.get("c1_label") ??
+          parsed.searchParams.get("sub_1") ??
+          parsed.searchParams.get("c1_label") ??
           (key.startsWith("caption") ? "English" : "English"),
         url: value,
         format: value.endsWith(".vtt") ? "vtt" : "srt",
@@ -141,7 +141,41 @@ function extractDirectStreamFromHtml(html) {
     if (match?.[1]) return match[1];
   }
 
-  return null;
+  return extractStreamFromPackedEval(html);
+}
+
+function unpackPackerEval(html) {
+  const match = html.match(
+    /eval\(function\(p,a,c,k,e,d\)\{while\(c--\)if\(k\[c\]\)p=p\.replace\(new RegExp\('\\\\b'\+c\.toString\(a\)\+'\\\\b','g'\),k\[c\]\);return p\}\('([\s\S]*?)',(\d+),(\d+),'([\s\S]*?)'\.split\('\|'\)\)\)/,
+  );
+  if (!match) return null;
+
+  let payload = match[1];
+  const base = Number(match[2]);
+  let count = Number(match[3]);
+  const dict = match[4].split("|");
+
+  while (count--) {
+    if (dict[count]) {
+      payload = payload.replace(
+        new RegExp("\\b" + count.toString(base) + "\\b", "g"),
+        dict[count],
+      );
+    }
+  }
+
+  return payload;
+}
+
+function extractStreamFromPackedEval(html) {
+  const unpacked = unpackPackerEval(html);
+  if (!unpacked) return null;
+
+  const matches = [
+    ...unpacked.matchAll(/https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/gi),
+  ].map((item) => item[0]);
+
+  return matches[0] ?? null;
 }
 
 function buildResolvedStream(streamUrl, subtitles, fallbackSubtitles) {

@@ -1,17 +1,19 @@
 const cheerio = require("cheerio");
 const { resolveEmbedStream } = require("./embed-resolver");
 const { fetchJikanAnime } = require("./jikan");
+const { mapServerName, displayCategory } = require("./server-names");
 const { ScrapeSession, cleanText, getBestSlug } = require("./http");
 
 const BASE = "https://anineko.to";
-const LANG_BUCKETS = ["sub", "dub", "raw", "hsub"];
+const SCRAPE_CATEGORIES = ["sub", "dub", "raw", "hsub"];
 
 function emptyBuckets() {
-  return { sub: [], dub: [], raw: [] };
+  return { sub: [], ssub: [], dub: [], raw: [] };
 }
 
 function bucketKey(category) {
   if (category === "hsub") return "sub";
+  if (category === "sub") return "ssub";
   return category;
 }
 
@@ -45,13 +47,13 @@ function parseWatchServers(html) {
   const $ = cheerio.load(html);
   const grouped = new Map();
 
-  for (const category of LANG_BUCKETS) {
+  for (const category of SCRAPE_CATEGORIES) {
     grouped.set(category, []);
   }
 
   $(".lang-group[data-id]").each((_, groupEl) => {
     const category = cleanText($(groupEl).attr("data-id")).toLowerCase();
-    if (!LANG_BUCKETS.includes(category)) return;
+    if (!SCRAPE_CATEGORIES.includes(category)) return;
 
     $(groupEl)
       .find(".server-video")
@@ -60,7 +62,7 @@ function parseWatchServers(html) {
         if (!embedUrl) return;
 
         const name = cleanText($(btnEl).text())
-          .replace(/(Sort Sub|DUB|RAW|HSUB)/gi, "")
+          .replace(/(Sort Sub|DUB|RAW|HSUB|Hard Sub)/gi, "")
           .trim();
 
         grouped.get(category).push({
@@ -79,8 +81,8 @@ async function resolveServer(category, server) {
     if (!resolved.m3u8 && !resolved.mp4) return null;
 
     return {
-      serverName: server.name,
-      category,
+      serverName: mapServerName(server.name, server.embedUrl, "anineko"),
+      category: displayCategory(category, "anineko"),
       m3u8: resolved.m3u8,
       mp4: resolved.mp4,
       type: resolved.type,
@@ -113,19 +115,25 @@ async function fetchAninekoWatchStreams(malId, episodeNumber) {
   const buckets = emptyBuckets();
 
   const tasks = [];
-  for (const category of LANG_BUCKETS) {
+  for (const category of SCRAPE_CATEGORIES) {
     for (const server of grouped.get(category) ?? []) {
-      tasks.push(resolveServer(category, server));
+      tasks.push({ category, promise: resolveServer(category, server) });
     }
   }
 
-  const resolved = await Promise.all(tasks);
-  for (const item of resolved) {
-    if (!item) continue;
-    buckets[bucketKey(item.category)].push(item);
-  }
+  const resolved = await Promise.all(tasks.map((task) => task.promise));
+  tasks.forEach((task, index) => {
+    const item = resolved[index];
+    if (!item) return;
+    buckets[bucketKey(task.category)].push(item);
+  });
 
-  if (!buckets.sub.length && !buckets.dub.length && !buckets.raw.length) {
+  if (
+    !buckets.sub.length &&
+    !buckets.ssub.length &&
+    !buckets.dub.length &&
+    !buckets.raw.length
+  ) {
     throw new Error(
       `No stream servers resolved for ${slug} episode ${episodeNumber}`,
     );

@@ -2,6 +2,7 @@ const cheerio = require("cheerio");
 const { fetchNekostreamEpisode } = require("./nekostream-mapper");
 const { resolveEmbedStream } = require("./embed-resolver");
 const { fetchJikanAnime } = require("./jikan");
+const { mapServerName, displayCategory } = require("./server-names");
 const { ScrapeSession, cleanText, normalizeTitle } = require("./http");
 
 const BASE = "https://anikototv.to";
@@ -178,12 +179,12 @@ function decodeBase64Maybe(value) {
   }
 }
 
-function buildStreamFromUrl(serverName, category, url) {
+function buildStreamFromUrl(serverName, category, url, embedUrl) {
   if (!url) return null;
 
   return {
-    serverName,
-    category,
+    serverName: mapServerName(serverName, embedUrl, "anikoto"),
+    category: displayCategory(category, "anikoto"),
     m3u8: url.includes(".m3u8") ? url : undefined,
     mp4: url.includes(".m3u8") ? undefined : url,
     type: url.includes(".m3u8") ? "hls" : "mp4",
@@ -212,13 +213,17 @@ async function fetchMapperServers(session, malId, slug, timestamp, episodeNumber
     for (const [provider, sources] of Object.entries(data)) {
       if (sources?.sub?.url) {
         const decoded = decodeBase64Maybe(sources.sub.url);
-        const stream = finalizeStream(buildStreamFromUrl(`${provider} SUB`, "sub", decoded));
+        const stream = finalizeStream(
+          buildStreamFromUrl(`${provider} SUB`, "sub", decoded),
+        );
         if (stream) buckets.sub.push(stream);
       }
 
       if (sources?.dub?.url) {
         const decoded = decodeBase64Maybe(sources.dub.url);
-        const stream = finalizeStream(buildStreamFromUrl(`${provider} DUB`, "dub", decoded));
+        const stream = finalizeStream(
+          buildStreamFromUrl(`${provider} DUB`, "dub", decoded),
+        );
         if (stream) buckets.dub.push(stream);
       }
     }
@@ -280,8 +285,8 @@ async function resolveAnikotoServer(session, slug, episodeNumber, server) {
     if (!resolved.m3u8 && !resolved.mp4) return null;
 
     return {
-      serverName: server.name,
-      category: server.category,
+      serverName: mapServerName(server.name, embedUrl, "anikoto"),
+      category: displayCategory(server.category, "anikoto"),
       m3u8: resolved.m3u8,
       mp4: resolved.mp4,
       type: resolved.type,
