@@ -178,19 +178,22 @@ function decodeBase64Maybe(value) {
   }
 }
 
-function buildStreamFromUrl(serverName, category, url, embedUrl) {
-  if (!url && !embedUrl) return null;
+function buildStreamFromUrl(serverName, category, url) {
+  if (!url) return null;
 
-  const streamUrl = url ?? embedUrl ?? "";
   return {
     serverName,
     category,
-    embedUrl,
-    m3u8: streamUrl.includes(".m3u8") ? streamUrl : undefined,
-    mp4: streamUrl && !streamUrl.includes(".m3u8") ? streamUrl : undefined,
-    type: streamUrl.includes(".m3u8") ? "hls" : streamUrl ? "mp4" : undefined,
+    m3u8: url.includes(".m3u8") ? url : undefined,
+    mp4: url.includes(".m3u8") ? undefined : url,
+    type: url.includes(".m3u8") ? "hls" : "mp4",
     subtitles: [],
   };
+}
+
+function finalizeStream(stream) {
+  if (!stream?.m3u8 && !stream?.mp4) return null;
+  return stream;
 }
 
 async function fetchMapperServers(session, malId, slug, timestamp, episodeNumber) {
@@ -209,32 +212,14 @@ async function fetchMapperServers(session, malId, slug, timestamp, episodeNumber
     for (const [provider, sources] of Object.entries(data)) {
       if (sources?.sub?.url) {
         const decoded = decodeBase64Maybe(sources.sub.url);
-        if (decoded) {
-          buckets.sub.push({
-            serverName: `${provider} SUB`,
-            category: "sub",
-            embedUrl: decoded,
-            m3u8: decoded.includes(".m3u8") ? decoded : undefined,
-            mp4: decoded.includes(".m3u8") ? undefined : decoded,
-            type: decoded.includes(".m3u8") ? "hls" : "mp4",
-            subtitles: [],
-          });
-        }
+        const stream = finalizeStream(buildStreamFromUrl(`${provider} SUB`, "sub", decoded));
+        if (stream) buckets.sub.push(stream);
       }
 
       if (sources?.dub?.url) {
         const decoded = decodeBase64Maybe(sources.dub.url);
-        if (decoded) {
-          buckets.dub.push({
-            serverName: `${provider} DUB`,
-            category: "dub",
-            embedUrl: decoded,
-            m3u8: decoded.includes(".m3u8") ? decoded : undefined,
-            mp4: decoded.includes(".m3u8") ? undefined : decoded,
-            type: decoded.includes(".m3u8") ? "hls" : "mp4",
-            subtitles: [],
-          });
-        }
+        const stream = finalizeStream(buildStreamFromUrl(`${provider} DUB`, "dub", decoded));
+        if (stream) buckets.dub.push(stream);
       }
     }
   } catch {
@@ -250,24 +235,16 @@ async function fetchNekostreamFallback(malId, episodeNumber) {
   try {
     const data = await fetchNekostreamEpisode(malId, episodeNumber);
 
-    if (data.sub?.playerUrl || data.sub?.downloadUrl) {
-      const playerUrl = decodeBase64Maybe(data.sub.playerUrl ?? "");
-      const stream = buildStreamFromUrl(
-        "Kiwi-Stream SUB",
-        "sub",
-        data.sub.downloadUrl,
-        playerUrl,
+    if (data.sub?.downloadUrl) {
+      const stream = finalizeStream(
+        buildStreamFromUrl("Kiwi-Stream SUB", "sub", data.sub.downloadUrl),
       );
       if (stream) buckets.sub.push(stream);
     }
 
-    if (data.dub?.playerUrl || data.dub?.downloadUrl) {
-      const playerUrl = decodeBase64Maybe(data.dub.playerUrl ?? "");
-      const stream = buildStreamFromUrl(
-        "Kiwi-Stream DUB",
-        "dub",
-        data.dub.downloadUrl,
-        playerUrl,
+    if (data.dub?.downloadUrl) {
+      const stream = finalizeStream(
+        buildStreamFromUrl("Kiwi-Stream DUB", "dub", data.dub.downloadUrl),
       );
       if (stream) buckets.dub.push(stream);
     }
@@ -300,11 +277,11 @@ async function resolveAnikotoServer(session, slug, episodeNumber, server) {
     if (!embedUrl) return null;
 
     const resolved = await resolveEmbedStream(embedUrl, `${BASE}/`);
+    if (!resolved.m3u8 && !resolved.mp4) return null;
 
     return {
       serverName: server.name,
       category: server.category,
-      embedUrl,
       m3u8: resolved.m3u8,
       mp4: resolved.mp4,
       type: resolved.type,

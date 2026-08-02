@@ -1,12 +1,12 @@
 const { ScrapeSession } = require("./http");
 
-const MEGAPLAY_API_MAP = {
-  "vidtube.site": "megaplay-1.buzz",
-  "vidplay.site": "megaplay-1.buzz",
-  "megaplay.buzz": "megaplay-1.buzz",
-  "megaplay-1.buzz": "megaplay-1.buzz",
-  "embed.bunkrerrer.com": "megaplay-1.buzz",
-};
+const MEGAPLAY_HOSTS = [
+  "megaplay.buzz",
+  "megaplay-1.buzz",
+  "vidtube.site",
+  "vidplay.site",
+  "embed.bunkrerrer.com",
+];
 
 const DIRECT_SRC_HOSTS = [
   "vivibebe.site",
@@ -21,6 +21,18 @@ function decodeMaybe(value) {
   } catch {
     return value;
   }
+}
+
+function normalizeHost(embedUrl) {
+  return new URL(embedUrl).hostname.replace(/^www\./, "");
+}
+
+function isMegaplayHost(host) {
+  return MEGAPLAY_HOSTS.some((item) => host.includes(item));
+}
+
+function megaplayReferer(embedUrl) {
+  return embedUrl.includes("?") ? embedUrl : `${embedUrl}?ajax=1`;
 }
 
 function extractSubtitlesFromEmbedUrl(embedUrl) {
@@ -73,19 +85,44 @@ function extractSubtitlesFromApiData(apiData) {
   if (Array.isArray(apiData.tracks)) {
     for (const track of apiData.tracks) {
       if (!track || typeof track !== "object") continue;
-      if (track.kind !== "subtitles" && track.type !== "subtitles") continue;
+      const kind = String(track.kind ?? track.type ?? "").toLowerCase();
+      if (!["subtitles", "captions"].includes(kind)) continue;
       const url = String(track.file ?? track.src ?? "");
       if (!url) continue;
       subtitles.push({
         lang: String(track.srclang ?? track.language ?? "en"),
         label: String(track.label ?? track.language ?? "Unknown"),
         url,
-        format: String(track.format ?? "srt"),
+        format: String(track.format ?? (url.endsWith(".vtt") ? "vtt" : "srt")),
       });
     }
   }
 
   return subtitles;
+}
+
+function extractStreamUrlFromApiData(apiData) {
+  const sources = apiData.sources;
+
+  if (sources && typeof sources === "object" && !Array.isArray(sources)) {
+    const file = sources.file ?? sources.url ?? sources.src;
+    if (file) return String(file);
+  }
+
+  if (Array.isArray(sources)) {
+    for (const source of sources) {
+      if (!source) continue;
+      if (typeof source === "string" && source.startsWith("http")) {
+        return source;
+      }
+      if (typeof source === "object") {
+        const file = source.file ?? source.url ?? source.src;
+        if (file) return String(file);
+      }
+    }
+  }
+
+  return String(apiData.source ?? apiData.url ?? apiData.file ?? "");
 }
 
 function extractDirectStreamFromHtml(html) {
@@ -116,37 +153,29 @@ function buildResolvedStream(streamUrl, subtitles, fallbackSubtitles) {
   };
 }
 
-async function resolveMegaplayStream(session, embedUrl, html) {
-  const dataId =
-    html.match(/data-id="(\d+)"/)?.[1] ??
-    html.match(/data-realid="([^"]+)"/)?.[1];
-
+async function resolveMegaplayGetSources(session, embedUrl, html) {
+  const dataId = html.match(/data-id="(\d+)"/)?.[1];
   if (!dataId) return null;
 
-  const host = new URL(embedUrl).hostname.replace(/^www\./, "");
-  const apiHosts = [
-    MEGAPLAY_API_MAP[host],
-    "megaplay-1.buzz",
-    "megaplay.buzz",
-    host,
-  ].filter(Boolean);
+  const host = normalizeHost(embedUrl);
+  const referer = megaplayReferer(embedUrl);
+  const apiHosts = [host, "megaplay.buzz", "vidtube.site"];
 
   for (const apiHost of [...new Set(apiHosts)]) {
     try {
       const apiData = await session.json(
-        `https://${apiHost}/ajax/sources/${dataId}`,
+        `https://${apiHost}/stream/getSources?id=${dataId}`,
         {
           headers: {
             Accept: "application/json, text/plain, */*",
-            Referer: embedUrl,
-            Origin: `https://${host}`,
+            Referer: referer,
+            Origin: `https://${apiHost}`,
+            "X-Requested-With": "XMLHttpRequest",
           },
         },
       );
 
-      const streamUrl = String(
-        apiData.source ?? apiData.url ?? apiData.file ?? "",
-      );
+      const streamUrl = extractStreamUrlFromApiData(apiData);
       if (!streamUrl) continue;
 
       return {
@@ -164,69 +193,35 @@ async function resolveMegaplayStream(session, embedUrl, html) {
 async function resolveEmbedStream(embedUrl, referer) {
   const subtitles = extractSubtitlesFromEmbedUrl(embedUrl);
   const session = new ScrapeSession(referer);
-  const html = await session.text(embedUrl, {
+  const host = normalizeHost(embedUrl);
+  const fetchUrl = isMegaplayHost(host) ? megaplayReferer(embedUrl) : embedUrl;
+
+  const html = await session.text(fetchUrl, {
     headers: { Accept: "text/html,*/*" },
   });
 
   const direct = extractDirectStreamFromHtml(html);
   if (direct) {
-    return {
-      m3u8: direct.includes(".m3u8") ? direct : undefined,
-      mp4: direct.includes(".m3u8") ? undefined : direct,
-      type: direct.includes(".m3u8") ? "hls" : "mp4",
-      subtitles,
-    };
+    return buildResolvedStream(direct, subtitles, subtitles);
   }
 
-  const host = new URL(embedUrl).hostname.replace(/^www\./, "");
-  if (DIRECT_SRC_HOSTS.some((item) => host.includes(item.replace(/^www\./, "")))) {
-    return { subtitles };
-  }
-
-  const dataId =
-    html.match(/data-id="(\d+)"/)?.[1] ??
-    html.match(/data-realid="([^"]+)"/)?.[1];
-
-  if (!dataId) {
-    const megaplay = await resolveMegaplayStream(session, embedUrl, html);
+  if (
+    isMegaplayHost(host) ||
+    html.includes("megaplay-player") ||
+    html.includes('data-id="')
+  ) {
+    const megaplay = await resolveMegaplayGetSources(session, embedUrl, html);
     if (megaplay) {
-      return buildResolvedStream(megaplay.streamUrl, megaplay.subtitles, subtitles);
-    }
-    return { subtitles };
-  }
-
-  const apiHost = MEGAPLAY_API_MAP[host] ?? host;
-  try {
-    const apiData = await session.json(
-      `https://${apiHost}/ajax/sources/${dataId}`,
-      {
-        headers: {
-          Accept: "application/json, text/plain, */*",
-          Referer: embedUrl,
-          Origin: `https://${host}`,
-        },
-      },
-    );
-
-    const streamUrl = String(
-      apiData.source ?? apiData.url ?? apiData.file ?? "",
-    );
-    const apiSubtitles = extractSubtitlesFromApiData(apiData);
-
-    if (streamUrl) {
       return buildResolvedStream(
-        streamUrl,
-        apiSubtitles.length ? apiSubtitles : subtitles,
+        megaplay.streamUrl,
+        megaplay.subtitles,
         subtitles,
       );
     }
-  } catch {
-    // fall through
   }
 
-  const megaplay = await resolveMegaplayStream(session, embedUrl, html);
-  if (megaplay) {
-    return buildResolvedStream(megaplay.streamUrl, megaplay.subtitles, subtitles);
+  if (DIRECT_SRC_HOSTS.some((item) => host.includes(item.replace(/^www\./, "")))) {
+    return { subtitles };
   }
 
   return { subtitles };

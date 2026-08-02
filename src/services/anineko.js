@@ -81,7 +81,6 @@ async function resolveServer(category, server) {
     return {
       serverName: server.name,
       category,
-      embedUrl: server.embedUrl,
       m3u8: resolved.m3u8,
       mp4: resolved.mp4,
       type: resolved.type,
