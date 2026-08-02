@@ -1,6 +1,6 @@
 # aniapikoto
 
-AniNeko & AniKoto **watch stream API**. Returns SUB / DUB / RAW servers with m3u8 links and subtitle files by MAL ID + episode number.
+AniNeko & AniKoto **watch stream API**. Returns SUB / SSUB / DUB / RAW servers with **direct m3u8** links and subtitle files by MAL ID + episode number.
 
 Deploy on **Vercel** or run locally with Express.
 
@@ -16,11 +16,41 @@ Deploy on **Vercel** or run locally with Express.
 
 ```bash
 # One Piece episode 1
-curl "https://your-api.vercel.app/api/anineko/mal/21/1"
-curl "https://your-api.vercel.app/api/anikoto/mal/21/1"
+curl "https://aniapikoto.vercel.app/api/anineko/mal/21/1"
+curl "https://aniapikoto.vercel.app/api/anikoto/mal/21/1"
 ```
 
-### Response
+### AniKoto response
+
+Server names: **Mega**, **BYFMS**, **VidPlay**, **Pahe**, **DGHG**
+
+```json
+{
+  "success": true,
+  "data": {
+    "source": "anikoto",
+    "malId": 21,
+    "episodeNumber": 1,
+    "title": "One Piece",
+    "slug": "one-piece-odmau",
+    "sub": [
+      {
+        "serverName": "Mega",
+        "category": "sub",
+        "m3u8": "https://....master.m3u8",
+        "type": "hls",
+        "subtitles": [{ "lang": "en", "label": "English", "url": "https://....vtt", "format": "vtt" }]
+      }
+    ],
+    "dub": [],
+    "raw": []
+  }
+}
+```
+
+### AniNeko response
+
+Server names: **Neko**, **BYFMS**, **DGHG**, **VidPlay**, **Pahe** (different mapping from AniKoto)
 
 ```json
 {
@@ -31,17 +61,14 @@ curl "https://your-api.vercel.app/api/anikoto/mal/21/1"
     "episodeNumber": 1,
     "title": "One Piece",
     "slug": "one-piece",
-    "anilistId": 21,
-    "sub": [
+    "sub": [],
+    "ssub": [
       {
-        "serverName": "HD-1",
-        "category": "sub",
-        "embedUrl": "https://...",
-        "m3u8": "https://....m3u8",
+        "serverName": "Neko",
+        "category": "ssub",
+        "m3u8": "https://....master.m3u8",
         "type": "hls",
-        "subtitles": [
-          { "lang": "en", "label": "English", "url": "https://....vtt", "format": "vtt" }
-        ]
+        "subtitles": [{ "lang": "en", "url": "https://....vtt", "format": "vtt" }]
       }
     ],
     "dub": [],
@@ -50,41 +77,44 @@ curl "https://your-api.vercel.app/api/anikoto/mal/21/1"
 }
 ```
 
+- `sub` = hard sub (hsub)
+- `ssub` = soft sub (external subtitles)
+- No `embedUrl` in response — only resolved m3u8/mp4
+
 ## Local run
 
 ```powershell
-cd "D:\Dw\anime setup\anime-watch-api"
+cd anime-watch-api
 npm install
 npm run dev
 ```
 
-Server starts on **http://localhost:3002**
+Server: **http://localhost:3002**
 
 ```powershell
 curl http://localhost:3002/api/anineko/mal/21/1
+curl http://localhost:3002/api/anikoto/mal/21/1
 ```
 
 ## Vercel deploy
 
-1. Push this repo to GitHub
+1. Repo: https://github.com/hianimevit/aniapikoto
 2. Import in Vercel
-3. No env vars required (optional: `NEKOSTREAM_MAPPER_URL`)
+3. Optional env: `NEKOSTREAM_MAPPER_URL`
 
 ## Project structure
 
 ```
-anime-watch-api/
-├── api/index.js          # Vercel serverless entry
+aniapikoto/
+├── api/index.js
 ├── src/
-│   ├── app.js            # Express app
-│   ├── index.js          # Local dev server
-│   ├── routes/
-│   │   ├── anineko.js
-│   │   └── anikoto.js
+│   ├── app.js
+│   ├── routes/anineko.js, anikoto.js
 │   └── services/
 │       ├── anineko.js
 │       ├── anikoto.js
 │       ├── embed-resolver.js
+│       ├── server-names.js
 │       ├── http.js
 │       ├── jikan.js
 │       └── nekostream-mapper.js
@@ -94,13 +124,9 @@ anime-watch-api/
 
 ## Use from hianime-next
 
-Set in `.env.local`:
-
 ```env
-WATCH_API_URL=https://your-anime-watch-api.vercel.app
+WATCH_API_URL=https://aniapikoto.vercel.app
 ```
-
-Then call:
 
 ```
 GET ${WATCH_API_URL}/api/anineko/mal/21/1
