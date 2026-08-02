@@ -8,6 +8,14 @@ const MEGAPLAY_HOSTS = [
   "embed.bunkrerrer.com",
 ];
 
+const MEGAPLAY_API_HOSTS = {
+  "vidtube.site": ["vidtube.site", "megaplay.buzz"],
+  "vidplay.site": ["vidplay.site", "megaplay.buzz"],
+  "megaplay.buzz": ["megaplay.buzz"],
+  "megaplay-1.buzz": ["megaplay.buzz", "megaplay-1.buzz"],
+  "embed.bunkrerrer.com": ["megaplay.buzz"],
+};
+
 const DIRECT_SRC_HOSTS = [
   "vivibebe.site",
   "vibeplayer.site",
@@ -33,6 +41,18 @@ function isMegaplayHost(host) {
 
 function megaplayReferer(embedUrl) {
   return embedUrl.includes("?") ? embedUrl : `${embedUrl}?ajax=1`;
+}
+
+function embedFetchHeaders(referer, embedUrl) {
+  const headers = { Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" };
+  if (referer.includes("anikoto")) {
+    headers.Referer = referer;
+    headers.Origin = new URL(referer).origin;
+  } else if (embedUrl) {
+    headers.Referer = megaplayReferer(embedUrl);
+    headers.Origin = `https://${normalizeHost(embedUrl)}`;
+  }
+  return headers;
 }
 
 function extractSubtitlesFromEmbedUrl(embedUrl) {
@@ -122,7 +142,17 @@ function extractStreamUrlFromApiData(apiData) {
     }
   }
 
-  return String(apiData.source ?? apiData.url ?? apiData.file ?? "");
+  const flat = String(apiData.source ?? apiData.url ?? apiData.file ?? "");
+  if (flat.startsWith("http")) return flat;
+
+  const backup = apiData.backup;
+  if (typeof backup === "string" && backup.startsWith("http")) return backup;
+  if (backup && typeof backup === "object") {
+    const file = backup.file ?? backup.url ?? backup.src;
+    if (file) return String(file);
+  }
+
+  return "";
 }
 
 function extractDirectStreamFromHtml(html) {
@@ -187,28 +217,35 @@ function buildResolvedStream(streamUrl, subtitles, fallbackSubtitles) {
   };
 }
 
-async function resolveMegaplayGetSources(session, embedUrl, html) {
-  const dataId = html.match(/data-id="(\d+)"/)?.[1];
-  if (!dataId) return null;
+function megaplayApiHostList(embedHost) {
+  const mapped = MEGAPLAY_API_HOSTS[embedHost] ?? [embedHost, "megaplay.buzz", "vidtube.site"];
+  return [...new Set(mapped)];
+}
 
-  const host = normalizeHost(embedUrl);
-  const referer = megaplayReferer(embedUrl);
-  const apiHosts = [host, "megaplay.buzz", "vidtube.site"];
+async function fetchMegaplayApiData(session, apiHost, dataId, embedUrl, referer) {
+  const playerReferer = megaplayReferer(embedUrl);
+  const requestHeaders = {
+    Accept: "application/json, text/plain, */*",
+    Referer: playerReferer,
+    Origin: `https://${apiHost}`,
+    "X-Requested-With": "XMLHttpRequest",
+  };
 
-  for (const apiHost of [...new Set(apiHosts)]) {
+  const endpoints = [
+    `https://${apiHost}/stream/getSources?id=${dataId}`,
+    `https://${apiHost}/ajax/sources/${dataId}`,
+  ];
+
+  for (const url of endpoints) {
     try {
-      const apiData = await session.json(
-        `https://${apiHost}/stream/getSources?id=${dataId}`,
-        {
-          headers: {
-            Accept: "application/json, text/plain, */*",
-            Referer: referer,
-            Origin: `https://${apiHost}`,
-            "X-Requested-With": "XMLHttpRequest",
-          },
-        },
-      );
+      const response = await session.fetch(url, { headers: requestHeaders });
+      if (!response.ok) continue;
 
+      const contentType = response.headers.get("content-type") || "";
+      const text = await response.text();
+      if (!contentType.includes("json") && !text.trim().startsWith("{")) continue;
+
+      const apiData = JSON.parse(text);
       const streamUrl = extractStreamUrlFromApiData(apiData);
       if (!streamUrl) continue;
 
@@ -224,15 +261,57 @@ async function resolveMegaplayGetSources(session, embedUrl, html) {
   return null;
 }
 
-async function resolveEmbedStream(embedUrl, referer) {
-  const subtitles = extractSubtitlesFromEmbedUrl(embedUrl);
-  const session = new ScrapeSession(referer);
-  const host = normalizeHost(embedUrl);
-  const fetchUrl = isMegaplayHost(host) ? megaplayReferer(embedUrl) : embedUrl;
+async function resolveMegaplayStream(session, embedUrl, html, referer) {
+  const dataId = html.match(/data-id="(\d+)"/)?.[1];
+  if (!dataId) return null;
 
-  const html = await session.text(fetchUrl, {
-    headers: { Accept: "text/html,*/*" },
+  const embedHost = normalizeHost(embedUrl);
+  const apiHosts = megaplayApiHostList(embedHost);
+
+  for (const apiHost of apiHosts) {
+    const resolved = await fetchMegaplayApiData(
+      session,
+      apiHost,
+      dataId,
+      embedUrl,
+      referer,
+    );
+    if (resolved) return resolved;
+  }
+
+  return null;
+}
+
+async function fetchEmbedHtml(session, embedUrl, referer) {
+  const host = normalizeHost(embedUrl);
+  const candidates = isMegaplayHost(host)
+    ? [embedUrl, megaplayReferer(embedUrl)]
+    : [embedUrl];
+
+  for (const url of candidates) {
+    try {
+      const html = await session.text(url, {
+        headers: embedFetchHeaders(referer, embedUrl),
+      });
+      if (html.includes('data-id="') || html.includes(".m3u8")) {
+        return html;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return session.text(candidates[0], {
+    headers: embedFetchHeaders(referer, embedUrl),
   });
+}
+
+async function resolveEmbedStream(embedUrl, referer, existingSession) {
+  const subtitles = extractSubtitlesFromEmbedUrl(embedUrl);
+  const session = existingSession ?? new ScrapeSession(referer);
+  const host = normalizeHost(embedUrl);
+
+  const html = await fetchEmbedHtml(session, embedUrl, referer);
 
   const direct = extractDirectStreamFromHtml(html);
   if (direct) {
@@ -244,7 +323,7 @@ async function resolveEmbedStream(embedUrl, referer) {
     html.includes("megaplay-player") ||
     html.includes('data-id="')
   ) {
-    const megaplay = await resolveMegaplayGetSources(session, embedUrl, html);
+    const megaplay = await resolveMegaplayStream(session, embedUrl, html, referer);
     if (megaplay) {
       return buildResolvedStream(
         megaplay.streamUrl,

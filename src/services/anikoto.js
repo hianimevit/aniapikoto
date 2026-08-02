@@ -281,7 +281,7 @@ async function resolveAnikotoServer(session, slug, episodeNumber, server) {
     const embedUrl = payload.result?.url;
     if (!embedUrl) return null;
 
-    const resolved = await resolveEmbedStream(embedUrl, `${BASE}/`);
+    const resolved = await resolveEmbedStream(embedUrl, `${BASE}/`, session);
     if (!resolved.m3u8 && !resolved.mp4) return null;
 
     return {
@@ -339,11 +339,12 @@ async function fetchAnikotoWatchStreams(malId, episodeNumber) {
     episodeMeta.serverIds,
   );
 
-  const resolved = await Promise.all(
-    servers.map((server) =>
-      resolveAnikotoServer(session, slug, episodeNumber, server),
-    ),
-  );
+  const resolved = [];
+  for (const server of servers) {
+    resolved.push(
+      await resolveAnikotoServer(session, slug, episodeNumber, server),
+    );
+  }
 
   const buckets = emptyBuckets();
   for (const item of resolved) {
