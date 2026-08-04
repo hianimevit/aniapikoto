@@ -6,17 +6,32 @@ const ANIKOTO_SERVER_MAP = [
   { pattern: /mapper|dghg/i, name: "DGHG" },
 ];
 
-const ANINEKO_SERVER_MAP = [
-  { pattern: /dood|playmogo|mogo/i, name: "VidPlay" },
-  { pattern: /streamhg|otakuhg|hg/i, name: "BYFMS" },
-  { pattern: /earnvids|otakuvid|vid\.online/i, name: "DGHG" },
-  { pattern: /hd-?1|vibe|vivibebe|neko/i, name: "Neko" },
-  { pattern: /pahe|kiwi|nekostream/i, name: "Pahe" },
+const BLOCKED_ANINEKO_PATTERNS = [
+  /streamhg/i,
+  /otakuhg/i,
+  /earnvids/i,
+  /otakuvid/i,
+  /otakuvid\.online/i,
+  /vid\.online\/embed/i,
 ];
+
+function isBlockedAninekoServer(rawName, embedUrl) {
+  const haystack = `${rawName} ${embedUrl ?? ""}`.toLowerCase();
+  return BLOCKED_ANINEKO_PATTERNS.some((pattern) => pattern.test(haystack));
+}
+
+function assignAninekoHdNames(buckets) {
+  for (const key of ["sub", "ssub", "dub", "raw"]) {
+    if (!Array.isArray(buckets[key])) continue;
+    buckets[key].forEach((item, index) => {
+      item.serverName = `HD-${index + 1}`;
+    });
+  }
+}
 
 function mapServerName(rawName, embedUrl, source) {
   const haystack = `${rawName} ${embedUrl ?? ""}`.toLowerCase();
-  const rules = source === "anikoto" ? ANIKOTO_SERVER_MAP : ANINEKO_SERVER_MAP;
+  const rules = source === "anikoto" ? ANIKOTO_SERVER_MAP : [];
 
   for (const rule of rules) {
     if (rule.pattern.test(haystack)) {
@@ -36,4 +51,6 @@ function displayCategory(category, source) {
 module.exports = {
   mapServerName,
   displayCategory,
+  isBlockedAninekoServer,
+  assignAninekoHdNames,
 };

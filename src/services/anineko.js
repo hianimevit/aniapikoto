@@ -1,7 +1,11 @@
 const cheerio = require("cheerio");
 const { resolveEmbedStream } = require("./embed-resolver");
 const { fetchJikanAnime } = require("./jikan");
-const { mapServerName, displayCategory } = require("./server-names");
+const {
+  displayCategory,
+  isBlockedAninekoServer,
+  assignAninekoHdNames,
+} = require("./server-names");
 const { ScrapeSession, cleanText, getBestSlug } = require("./http");
 
 const BASE = "https://anineko.to";
@@ -81,7 +85,7 @@ async function resolveServer(category, server) {
     if (!resolved.m3u8 && !resolved.mp4) return null;
 
     return {
-      serverName: mapServerName(server.name, server.embedUrl, "anineko"),
+      serverName: server.name,
       category: displayCategory(category, "anineko"),
       m3u8: resolved.m3u8,
       mp4: resolved.mp4,
@@ -117,6 +121,7 @@ async function fetchAninekoWatchStreams(malId, episodeNumber) {
   const tasks = [];
   for (const category of SCRAPE_CATEGORIES) {
     for (const server of grouped.get(category) ?? []) {
+      if (isBlockedAninekoServer(server.name, server.embedUrl)) continue;
       tasks.push({ category, promise: resolveServer(category, server) });
     }
   }
@@ -127,6 +132,8 @@ async function fetchAninekoWatchStreams(malId, episodeNumber) {
     if (!item) return;
     buckets[bucketKey(task.category)].push(item);
   });
+
+  assignAninekoHdNames(buckets);
 
   if (
     !buckets.sub.length &&
