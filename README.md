@@ -50,7 +50,7 @@ Server names: **Mega**, **BYFMS**, **VidPlay**, **Pahe**, **DGHG**
 
 ### AniNeko response
 
-Server names: **Neko**, **BYFMS**, **DGHG**, **VidPlay**, **Pahe** (different mapping from AniKoto)
+Server names: **HD-1**, **HD-2**, **HD-3**… (StreamHG / EarnVids embeds are skipped)
 
 ```json
 {
@@ -64,7 +64,7 @@ Server names: **Neko**, **BYFMS**, **DGHG**, **VidPlay**, **Pahe** (different ma
     "sub": [],
     "ssub": [
       {
-        "serverName": "Neko",
+        "serverName": "HD-1",
         "category": "ssub",
         "m3u8": "https://....master.m3u8",
         "type": "hls",
